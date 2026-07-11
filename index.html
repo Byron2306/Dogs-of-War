@@ -1,0 +1,1546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Dogs of War with Explosions</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      height: 100%;
+      background: #000;
+    }
+    canvas {
+      display: block;
+      background: #000;
+      position: relative;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas"></canvas>
+  <script>
+    // =============== Helper Functions (Type Checking & Text Wrapping) ===============
+    function getCardType(card) {
+      if (card.sound) {
+        if (card.sound.includes("ground")) return "land";
+        if (card.sound.includes("air")) return "air";
+        if (card.sound.includes("sea")) return "sea";
+      }
+      return "land"; // fallback if not recognized
+    }
+    // Determines which type has advantage: air > sea, sea > land, land > air.
+    function isStrong(type1, type2) {
+      if (type1 === "air" && type2 === "sea") return true;
+      if (type1 === "sea" && type2 === "land") return true;
+      if (type1 === "land" && type2 === "air") return true;
+      return false;
+    }
+    function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+      let words = text.split(' ');
+      let line = "";
+      let lines = [];
+      for (let n = 0; n < words.length; n++) {
+        let testLine = line + words[n] + " ";
+        let metrics = ctx.measureText(testLine);
+        if (metrics.width > maxWidth && n > 0) {
+          lines.push(line);
+          line = words[n] + " ";
+        } else {
+          line = testLine;
+        }
+      }
+      lines.push(line);
+      for (let i = 0; i < lines.length; i++) {
+        ctx.fillText(lines[i], x, y + i * lineHeight);
+      }
+      return lines.length;
+    }
+    
+    // =============== Global Variables and Setup ===============
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    // Screens: "menu", "factionChoice", "main"
+    let currentScreen = "menu";
+    // Game phases: "playerTurnOverlay", "playerDrawCards", "playerTurnComplete", etc.
+    let gamePhase = "";
+
+    let playerGeneralLife = 400, enemyGeneralLife = 400;
+    let roundNumber = 1;
+    let playerPupperPower = 1, enemyPupperPower = 1;
+    let playerLaneAssignments = [null, null, null];
+    let enemyLaneAssignments = [null, null, null];
+
+    let turnOverlayAlpha = 1, overlayFadeDuration = 1000, overlayFadeStart = null;
+    let cardAnimations = [], currentCardIndex = 0, cardAnimationDuration = 1000, cardDrawDelay = 500, cardAnimStartTime = null;
+    let enemyTurnOverlayAlpha = 1, enemyOverlayFadeStart = null, enemyCardAnimations = [], currentEnemyCardIndex = 0, enemyCardAnimStartTime = null, enemyDragDuration = 1000;
+    let handCards = [], enemyHandCards = [];
+    let draggingCard = null, dragOffsetX = 0, dragOffsetY = 0;
+    const rightButtonWidth = 150, rightButtonHeight = 50;
+    let currentBattleLane = 0;
+    let enemyLanePlayIndex = 0;
+
+    // Faction variables. Default player is Nazi Germany, default enemy is Soviet Union.
+    let playerFaction = "Nazi Germany";
+    let enemyFaction = "Soviet Union";
+
+    // Arrays for random enemy selection:
+    const axisFactions = ["Nazi Germany", "Imperial Japan", "Fascist Italy"];
+    const alliedFactions = ["Soviet Union", "Great Britain"];
+
+    // =============== Faction Options for the Selection Screen ===============
+    const factionOptions = [
+      {
+        side: "Axis",
+        name: "Nazi Germany",
+        description: "A relentless war machine with precision tactics and devastating technology, Nazi Germany storms the battlefield like an unstoppable juggernaut. Their blitzkrieg maneuvers and iron discipline make every encounter a high-stakes tactical showdown.",
+        valid: true,
+        flag: "germany.jpg",
+        buttonRect: null
+      },
+      {
+        side: "Axis",
+        name: "Fascist Italy",
+        description: "Fascist Italy charges forward with passionate zeal and bold strategies, blending cunning maneuvers with rich cultural flair. They may be underestimated, but on the battlefield, every move is a daring gamble for glory.",
+        valid: true,
+        flag: "italy.jpg",
+        buttonRect: null
+      },
+      {
+        side: "Axis",
+        name: "Imperial Japan",
+        description: "With a fierce warrior spirit and unmatched naval prowess, Imperial Japan strikes with the speed and precision of a samurai. Their tactical surprise and relentless determination transform every conflict into an epic showdown.",
+        valid: true,
+        flag: "japan.jpg",
+        buttonRect: null
+      },
+      {
+        side: "Allies",
+        name: "United States of America",
+        description: "The USA brings industrial might and innovative firepower to the fray, turning battlefields into arenas of high-octane action. Their troops, equipped with cutting-edge tech and boundless resolve, launch strategic offensives that redefine modern warfare.",
+        valid: false,
+        flag: "usa.jpg",
+        buttonRect: null
+      },
+      {
+        side: "Allies",
+        name: "Soviet Union",
+        description: "A titanic force forged in the crucible of extreme winters and brutal conflicts, the Soviet Union unleashes sheer mass and raw power on the enemy. Their overwhelming resilience and relentless counterattacks turn every skirmish into a battle for survival.",
+        valid: true,
+        flag: "soviet_union.jpg",
+        buttonRect: null
+      },
+      {
+        side: "Allies",
+        name: "Great Britain",
+        description: "With steadfast resolve and strategic naval supremacy, Great Britain outsmarts and outmaneuvers foes on land, sea, and air. Their daring paratrooper drops and covert operations make every mission a pulse-pounding adventure.",
+        valid: true,
+        flag: "uk.jpg",
+        buttonRect: null
+      }
+    ];
+
+    // =============== Music and Audio ===============
+    const music = new Audio("dow.mp3");
+    music.loop = true;
+    function startMusic() {
+      if (music.paused) { music.play(); }
+    }
+    const flipSound = new Audio("flip.mp3");
+    function playClickSound() { new Audio("click.mp3").play(); }
+
+    // =============== Load Images ===============
+    // Backgrounds / UI elements.
+    const backgroundImg = new Image(); backgroundImg.src = "start.png";
+    const factionChoiceBg = new Image(); factionChoiceBg.src = "faction_choice.png";
+    const buttonImg = new Image(); buttonImg.src = "button.png";
+    const mainScreenImg = new Image(); mainScreenImg.src = "main.png";
+    const cardbackImg = new Image(); cardbackImg.src = "cardback.png";
+    const battlefieldImg = new Image(); battlefieldImg.src = "battlefield.png";
+    const explosionImg = new Image(); explosionImg.src = "explosion.gif";
+
+    // General images for each faction.
+    const snifflerImgInit = new Image(); snifflerImgInit.src = "sniffler.png";    // Nazi Germany
+    const pawlinImgInit = new Image(); pawlinImgInit.src = "pawlin.png";          // Soviet Union
+    const japaneseGeneralImg = new Image(); japaneseGeneralImg.src = "hiroleasho.png";  // Imperial Japan
+    const britishGeneralImg = new Image(); britishGeneralImg.src = "woofhill.png";      // Great Britain
+    const italyGeneralImg = new Image(); italyGeneralImg.src = "mussolini.jpg";           // Fascist Italy
+
+    let snifflerImg = snifflerImgInit;
+    let pawlinImg = pawlinImgInit;
+    const pupperpowerImg = new Image(); pupperpowerImg.src = "pupperpower.png";
+    const wireImg = new Image(); wireImg.src = "wire.png";
+
+    // Nazi Germany & Shared Cards
+    const galefangFighterImg = new Image(); galefangFighterImg.src = "galefang_fighter.jpg";
+    const horizonHowlerImg = new Image(); horizonHowlerImg.src = "horizon_howler.jpg";
+    const ssSilverSnoutImg = new Image(); ssSilverSnoutImg.src = "ss_silver_snout.jpg";
+    const bulletHoundImg = new Image(); bulletHoundImg.src = "bullet_hound.jpg";
+    const wavebornWarhoundImg = new Image(); wavebornWarhoundImg.src = "waveborn_warhound.jpg";
+    const nimbusCrawlerImg = new Image(); nimbusCrawlerImg.src = "nimbus_crawler.jpg";
+    // Extra German Cards
+    const rollingGrowlerImg = new Image(); rollingGrowlerImg.src = "rolling_growler.jpg";
+    const rumblingBarkbusterImg = new Image(); rumblingBarkbusterImg.src = "rumbling_barkbuster.jpg";
+    const seethingWarhoundImg = new Image(); seethingWarhoundImg.src = "seething_warhound.jpg";
+    const surfStrikerImg = new Image(); surfStrikerImg.src = "surf_striker.jpg";
+    const snoopSchnauzerImg = new Image(); snoopSchnauzerImg.src = "snoop_schnauzer.jpg";
+    const thunderSquadronImg = new Image(); thunderSquadronImg.src = "thunder_squadron.jpg";
+
+    // Soviet Cards
+    const sovietHeavyTankImg = new Image(); sovietHeavyTankImg.src = "soviet_heavy_tank.png";
+    const sovietSoldierImg = new Image(); sovietSoldierImg.src = "soviet_soldier.png";
+    const sovietSubmarineImg = new Image(); sovietSubmarineImg.src = "soviet_submarine.png";
+    const typhoonSubmarineImg = new Image(); typhoonSubmarineImg.src = "typhoon_submarine.png";
+    const yakFighterImg = new Image(); yakFighterImg.src = "yak_fighter.png";
+    const yermolayevBomberImg = new Image(); yermolayevBomberImg.src = "yermolayev_bomber.png";
+    const sovietGuardShipImg = new Image(); sovietGuardShipImg.src = "soviet_guard_ship.png";
+    const sovietDestroyerImg = new Image(); sovietDestroyerImg.src = "soviet_destroyer.png";
+    const sovietSniperImg = new Image(); sovietSniperImg.src = "soviet_sniper.png";
+    const sovietLightTankImg = new Image(); sovietLightTankImg.src = "soviet_light_tank.png";
+    const kharkovPatrolImg = new Image(); kharkovPatrolImg.src = "kharkov_patrol.png";
+    const hindAttackHelicopterImg = new Image(); hindAttackHelicopterImg.src = "hind_attack_helicopter.png";
+
+    // Imperial Japan Cards
+    const imperialYamatoBattleshipImg = new Image(); imperialYamatoBattleshipImg.src = "imperial_yamato_battleship.png";
+    const nakajimaTenzanBomberImg = new Image(); nakajimaTenzanBomberImg.src = "nakajima_tenzan_bomber.png";
+    const kawasakiFighterImg = new Image(); kawasakiFighterImg.src = "kawasaki_fighter.png";
+    const nakajimaFighterImg = new Image(); nakajimaFighterImg.src = "nakajima_fighter.png";
+    const imperialTrooperArisakaImg = new Image(); imperialTrooperArisakaImg.src = "imperial_trooper_arisaka.png";
+    const type98TankImg = new Image(); type98TankImg.src = "type98_tank.png";
+    const imperialSubmarineImg = new Image(); imperialSubmarineImg.src = "imperial_submarine.png";
+    const cruiserKashiiImg = new Image(); cruiserKashiiImg.src = "cruiser_kashii.png";
+    const imperialFlamethrowerImg = new Image(); imperialFlamethrowerImg.src = "imperial_flamethrower.png";
+
+    // Great Britain Cards
+    const douglasBostonBomberImg = new Image(); douglasBostonBomberImg.src = "douglas_boston_bomber.png";
+    const grummanHellcatFighterImg = new Image(); grummanHellcatFighterImg.src = "grumman_hellcat_fighter.png";
+    const trooperLeeEnfieldImg = new Image(); trooperLeeEnfieldImg.src = "trooper_lee_enfield.png";
+    const shermanMediumTankImg = new Image(); shermanMediumTankImg.src = "sherman_medium_tank.png";
+    const amphionSubmarineImg = new Image(); amphionSubmarineImg.src = "amphion_submarine.png";
+    const hmsRobertsShipImg = new Image(); hmsRobertsShipImg.src = "hms_roberts_ship.png";
+    const eliteTrooperStenImg = new Image(); eliteTrooperStenImg.src = "elite_trooper_sten.png";
+    const vampireJetFighterImg = new Image(); vampireJetFighterImg.src = "vampire_jet_fighter.png";
+    const kingGeorgeBattleshipImg = new Image(); kingGeorgeBattleshipImg.src = "king_george_battleship.png";
+
+    // Fascist Italy Cards
+    const card115Img = new Image(); card115Img.src = "card115.jpg";
+    const card117Img = new Image(); card117Img.src = "card117.jpg";
+    const card122Img = new Image(); card122Img.src = "card122.jpg";
+    const card129Img = new Image(); card129Img.src = "card129.jpg";
+    const card133Img = new Image(); card133Img.src = "card133.jpg";
+    const card136Img = new Image(); card136Img.src = "card136.jpg"; // assumed .jpg
+    const card143Img = new Image(); card143Img.src = "card143.jpg";
+    const card144Img = new Image(); card144Img.src = "card144.jpg";
+    const card149Img = new Image(); card149Img.src = "card149.jpg";
+
+    // Flags for Faction Choice
+    const flagSoviet = new Image(); flagSoviet.src = "soviet_union.jpg";
+    const flagUSA = new Image(); flagUSA.src = "usa.jpg";
+    const flagJapan = new Image(); flagJapan.src = "japan.jpg";
+    const flagItaly = new Image(); flagItaly.src = "italy.jpg";
+    const flagUK = new Image(); flagUK.src = "uk.jpg";
+    const flagGermany = new Image(); flagGermany.src = "germany.jpg";
+
+    // =============== Image Counting ===============
+    let imagesLoaded = 0;
+    // Previously there were 61 images; now we add 1 new general (Italy) + 9 new Italy cards = 10 more → total 71 images.
+    const totalImages = 71;
+    function imageLoaded() {
+      imagesLoaded++;
+      if (imagesLoaded === totalImages) { resizeCanvas(); }
+    }
+    [
+      backgroundImg, factionChoiceBg, buttonImg, mainScreenImg, cardbackImg, battlefieldImg, explosionImg,
+      snifflerImgInit, pawlinImgInit, japaneseGeneralImg, britishGeneralImg, italyGeneralImg,
+      pupperpowerImg, wireImg,
+      galefangFighterImg, horizonHowlerImg, ssSilverSnoutImg, bulletHoundImg, wavebornWarhoundImg, nimbusCrawlerImg,
+      rollingGrowlerImg, rumblingBarkbusterImg, seethingWarhoundImg, surfStrikerImg, snoopSchnauzerImg, thunderSquadronImg,
+      sovietHeavyTankImg, sovietSoldierImg, sovietSubmarineImg, typhoonSubmarineImg, yakFighterImg, yermolayevBomberImg,
+      sovietGuardShipImg, sovietDestroyerImg, sovietSniperImg, sovietLightTankImg, kharkovPatrolImg, hindAttackHelicopterImg,
+      imperialYamatoBattleshipImg, nakajimaTenzanBomberImg, kawasakiFighterImg, nakajimaFighterImg,
+      imperialTrooperArisakaImg, type98TankImg, imperialSubmarineImg, cruiserKashiiImg, imperialFlamethrowerImg,
+      douglasBostonBomberImg, grummanHellcatFighterImg, trooperLeeEnfieldImg, shermanMediumTankImg,
+      amphionSubmarineImg, hmsRobertsShipImg, eliteTrooperStenImg, vampireJetFighterImg, kingGeorgeBattleshipImg,
+      card115Img, card117Img, card122Img, card129Img, card133Img, card136Img, card143Img, card144Img, card149Img,
+      flagSoviet, flagUSA, flagJapan, flagItaly, flagUK, flagGermany
+    ].forEach(img => { img.onload = imageLoaded; });
+
+    let fontLoaded = false;
+    const wolfenstein = new FontFace('Wolfenstein', 'url(wolfenstein.ttf)');
+    wolfenstein.load().then(loadedFont => {
+      document.fonts.add(loadedFont);
+      fontLoaded = true;
+      draw();
+    }).catch(error => { console.error("Font load error:", error); });
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      draw();
+    }
+    window.addEventListener("resize", resizeCanvas);
+
+    // =============== Card Pools for Each Faction ===============
+    // Nazi Germany
+    let naziPool = [
+      { img: galefangFighterImg, cost: 1, attack: 25, sound: "air.mp3", faction: "player" },
+      { img: horizonHowlerImg, cost: 1, attack: 45, sound: "sea.mp3", faction: "player" },
+      { img: ssSilverSnoutImg, cost: 3, attack: 70, sound: "ground.mp3", faction: "player" },
+      { img: bulletHoundImg, cost: 2, attack: 50, sound: "ground.mp3", faction: "player" },
+      { img: wavebornWarhoundImg, cost: 1, attack: 45, sound: "sea.mp3", faction: "player" },
+      { img: nimbusCrawlerImg, cost: 1, attack: 20, sound: "air.mp3", faction: "player" },
+      { img: rollingGrowlerImg, cost: 3, attack: 30, sound: "ground.mp3", faction: "player" },
+      { img: rumblingBarkbusterImg, cost: 1, attack: 35, sound: "ground.mp3", faction: "player" },
+      { img: seethingWarhoundImg, cost: 2, attack: 65, sound: "sea.mp3", faction: "player" },
+      { img: surfStrikerImg, cost: 2, attack: 70, sound: "sea.mp3", faction: "player" },
+      { img: snoopSchnauzerImg, cost: 1, attack: 30, sound: "air.mp3", faction: "player" },
+      { img: thunderSquadronImg, cost: 1, attack: 30, sound: "air.mp3", faction: "player" }
+    ];
+
+    // Soviet Union
+    let sovietPool = [
+      { img: sovietHeavyTankImg, cost: 3, attack: 70, sound: "ground.mp3", faction: "enemy" },
+      { img: sovietSoldierImg, cost: 1, attack: 25, sound: "ground.mp3", faction: "enemy" },
+      { img: sovietSubmarineImg, cost: 1, attack: 35, sound: "sea.mp3", faction: "enemy" },
+      { img: typhoonSubmarineImg, cost: 2, attack: 65, sound: "sea.mp3", faction: "enemy" },
+      { img: yakFighterImg, cost: 1, attack: 30, sound: "air.mp3", faction: "enemy" },
+      { img: yermolayevBomberImg, cost: 1, attack: 20, sound: "air.mp3", faction: "enemy" },
+      { img: sovietGuardShipImg, cost: 2, attack: 60, sound: "sea.mp3", faction: "enemy" },
+      { img: sovietDestroyerImg, cost: 1, attack: 40, sound: "sea.mp3", faction: "enemy" },
+      { img: sovietSniperImg, cost: 1, attack: 35, sound: "ground.mp3", faction: "enemy" },
+      { img: sovietLightTankImg, cost: 1, attack: 35, sound: "ground.mp3", faction: "enemy" },
+      { img: kharkovPatrolImg, cost: 2, attack: 45, sound: "air.mp3", faction: "enemy" },
+      { img: hindAttackHelicopterImg, cost: 1, attack: 30, sound: "air.mp3", faction: "enemy" }
+    ];
+
+    // Imperial Japan
+    let japanPool = [
+      { img: imperialYamatoBattleshipImg, cost: 3, attack: 65, sound: "sea.mp3", faction: "player" },
+      { img: nakajimaTenzanBomberImg, cost: 1, attack: 25, sound: "air.mp3", faction: "player" },
+      { img: kawasakiFighterImg, cost: 1, attack: 35, sound: "air.mp3", faction: "player" },
+      { img: nakajimaFighterImg, cost: 2, attack: 55, sound: "air.mp3", faction: "player" },
+      { img: imperialTrooperArisakaImg, cost: 1, attack: 20, sound: "ground.mp3", faction: "player" },
+      { img: type98TankImg, cost: 1, attack: 30, sound: "ground.mp3", faction: "player" },
+      { img: imperialSubmarineImg, cost: 1, attack: 35, sound: "sea.mp3", faction: "player" },
+      { img: cruiserKashiiImg, cost: 1, attack: 35, sound: "sea.mp3", faction: "player" },
+      { img: imperialFlamethrowerImg, cost: 2, attack: 50, sound: "ground.mp3", faction: "player" }
+    ];
+
+    // Great Britain
+    let britainPool = [
+      { img: douglasBostonBomberImg, cost: 1, attack: 30, sound: "air.mp3", faction: "player" },
+      { img: grummanHellcatFighterImg, cost: 2, attack: 45, sound: "air.mp3", faction: "player" },
+      { img: trooperLeeEnfieldImg, cost: 1, attack: 25, sound: "ground.mp3", faction: "player" },
+      { img: shermanMediumTankImg, cost: 2, attack: 45, sound: "ground.mp3", faction: "player" },
+      { img: amphionSubmarineImg, cost: 1, attack: 35, sound: "sea.mp3", faction: "player" },
+      { img: hmsRobertsShipImg, cost: 1, attack: 45, sound: "sea.mp3", faction: "player" },
+      { img: eliteTrooperStenImg, cost: 3, attack: 60, sound: "ground.mp3", faction: "player" },
+      { img: vampireJetFighterImg, cost: 3, attack: 55, sound: "air.mp3", faction: "player" },
+      { img: kingGeorgeBattleshipImg, cost: 3, attack: 95, sound: "sea.mp3", faction: "player" }
+    ];
+
+    // Fascist Italy
+    let italyPool = [
+      { img: card115Img, cost: 1, attack: 30, sound: "ground.mp3", faction: "player" },
+      { img: card117Img, cost: 1, attack: 20, sound: "ground.mp3", faction: "player" },
+      { img: card122Img, cost: 2, attack: 50, sound: "ground.mp3", faction: "player" },
+      { img: card129Img, cost: 1, attack: 35, sound: "air.mp3", faction: "player" },
+      { img: card133Img, cost: 2, attack: 55, sound: "air.mp3", faction: "player" },
+      { img: card136Img, cost: 3, attack: 60, sound: "air.mp3", faction: "player" },
+      { img: card143Img, cost: 1, attack: 30, sound: "sea.mp3", faction: "player" },
+      { img: card144Img, cost: 1, attack: 40, sound: "sea.mp3", faction: "player" },
+      { img: card149Img, cost: 2, attack: 55, sound: "sea.mp3", faction: "player" }
+    ];
+
+    // Set default pools (Nazi vs Soviet by default)
+    let playerCardPool = naziPool.slice();
+    let enemyCardPool = sovietPool.slice();
+
+    // =============== Utility Functions ===============
+    function pickRandom(arr) {
+      return arr[Math.floor(Math.random() * arr.length)];
+    }
+    function getPoolForFaction(factionName) {
+      if (factionName === "Nazi Germany") return naziPool;
+      if (factionName === "Imperial Japan") return japanPool;
+      if (factionName === "Soviet Union") return sovietPool;
+      if (factionName === "Great Britain") return britainPool;
+      if (factionName === "Fascist Italy") return italyPool;
+      return naziPool;
+    }
+    function getGeneralForFaction(factionName) {
+      if (factionName === "Nazi Germany") return snifflerImgInit;
+      if (factionName === "Soviet Union") return pawlinImgInit;
+      if (factionName === "Imperial Japan") return japaneseGeneralImg;
+      if (factionName === "Great Britain") return britishGeneralImg;
+      if (factionName === "Fascist Italy") return italyGeneralImg;
+      return snifflerImgInit;
+    }
+    function pickEnemyFaction(playerFaction) {
+      if (axisFactions.includes(playerFaction)) {
+        return pickRandom(alliedFactions);
+      } else {
+        return pickRandom(axisFactions);
+      }
+    }
+    function getRandomCard(pool) {
+      return pool[Math.floor(Math.random()*pool.length)];
+    }
+
+    // =============== End-of-Turn Sound Function (Now Includes Italy) ===============
+    function playTurnEndSound(faction, callback) {
+      let soundFile;
+      if (playerFaction === "Fascist Italy") {
+        if (faction === "player") {
+          let rand = Math.floor(Math.random()*5)+1;
+          soundFile = `italian${rand}.mp3`;
+        } else {
+          if (enemyFaction === "Soviet Union") {
+            if (faction === "enemy") {
+              let rand = Math.floor(Math.random()*5)+1;
+              soundFile = `russian${rand}.mp3`;
+            } else {
+              soundFile = "ground.mp3";
+            }
+          } else if (enemyFaction === "Great Britain") {
+            if (faction === "enemy") {
+              let rand = Math.floor(Math.random()*5)+1;
+              soundFile = `british${rand}.mp3`;
+            } else {
+              soundFile = "ground.mp3";
+            }
+          } else {
+            soundFile = "ground.mp3";
+          }
+        }
+      }
+      else if (playerFaction === "Great Britain") {
+        if (faction === "player") {
+          let rand = Math.floor(Math.random()*5)+1;
+          soundFile = `british${rand}.mp3`;
+        } else {
+          if (enemyFaction === "Imperial Japan") {
+            if (faction === "enemy") {
+              let rand = Math.floor(Math.random()*5)+1;
+              soundFile = `japan${rand}.mp3`;
+            } else {
+              soundFile = "ground.mp3";
+            }
+          } else if (enemyFaction === "Fascist Italy") {
+            if (faction === "enemy") {
+              let rand = Math.floor(Math.random()*5)+1;
+              soundFile = `italian${rand}.mp3`;
+            } else {
+              soundFile = "ground.mp3";
+            }
+          } else {
+            let rand = Math.floor(Math.random()*5)+1;
+            soundFile = `german${rand}.mp3`;
+          }
+        }
+      }
+      else if (playerFaction === "Soviet Union") {
+        if (faction === "enemy") {
+          if (enemyFaction === "Imperial Japan") {
+            let rand = Math.floor(Math.random()*5)+1;
+            soundFile = `japan${rand}.mp3`;
+          } else if (enemyFaction === "Fascist Italy") {
+            let rand = Math.floor(Math.random()*5)+1;
+            soundFile = `italian${rand}.mp3`;
+          } else {
+            let rand = Math.floor(Math.random()*5)+1;
+            soundFile = `german${rand}.mp3`;
+          }
+        } else if (faction === "player") {
+          let rand = Math.floor(Math.random()*5)+1;
+          soundFile = `russian${rand}.mp3`;
+        } else {
+          soundFile = "ground.mp3";
+        }
+      }
+      else if (playerFaction === "Imperial Japan") {
+        if (faction === "player") {
+          let rand = Math.floor(Math.random()*5)+1;
+          soundFile = `japan${rand}.mp3`;
+        } else if (faction === "enemy") {
+          if (enemyFaction === "Great Britain") {
+            let rand = Math.floor(Math.random()*5)+1;
+            soundFile = `british${rand}.mp3`;
+          } else {
+            let rand = Math.floor(Math.random()*5)+1;
+            soundFile = `russian${rand}.mp3`;
+          }
+        } else {
+          soundFile = "ground.mp3";
+        }
+      }
+      else {
+        // Nazi Germany by default.
+        if (faction === "enemy") {
+          if (enemyFaction === "Great Britain") {
+            let rand = Math.floor(Math.random()*5)+1;
+            soundFile = `british${rand}.mp3`;
+          } else if (enemyFaction === "Fascist Italy") {
+            let rand = Math.floor(Math.random()*5)+1;
+            soundFile = `italian${rand}.mp3`;
+          } else {
+            let rand = Math.floor(Math.random()*5)+1;
+            soundFile = `russian${rand}.mp3`;
+          }
+        } else if (faction === "player") {
+          let rand = Math.floor(Math.random()*5)+1;
+          soundFile = `german${rand}.mp3`;
+        } else {
+          soundFile = "ground.mp3";
+        }
+      }
+      let sound = new Audio(soundFile);
+      sound.play();
+      sound.onended = callback;
+    }
+
+    // =============== Main Menu Drawing ===============
+    function drawMainMenu() {
+      ctx.drawImage(backgroundImg, 0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "red";
+      ctx.font = fontLoaded ? "200px Wolfenstein" : "200px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("DOGS OF WAR", canvas.width/2, canvas.height*0.12);
+      const btnW = 400, btnH = 100;
+      const startBtn = { x: canvas.width/2 - btnW/2, y: canvas.height*0.5, width: btnW, height: btnH, text: "Start" };
+      const exitBtn = { x: canvas.width/2 - btnW/2, y: canvas.height*0.7, width: btnW, height: btnH, text: "Exit" };
+      [startBtn, exitBtn].forEach(btn => {
+        ctx.drawImage(buttonImg, btn.x, btn.y, btn.width, btn.height);
+        ctx.fillStyle = "black";
+        ctx.font = fontLoaded ? "48px Wolfenstein" : "48px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(btn.text, btn.x + btn.width/2, btn.y + btn.height/2);
+      });
+    }
+
+    // =============== Faction Choice Screen Drawing ===============
+    function drawFactionChoice() {
+      ctx.drawImage(factionChoiceBg, 0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "white";
+      ctx.font = fontLoaded ? "60px Wolfenstein" : "60px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("Choose your faction", canvas.width/2, 80);
+      ctx.font = fontLoaded ? "48px Wolfenstein" : "48px sans-serif";
+      ctx.fillStyle = "white";
+      ctx.fillText("Axis Powers", canvas.width/4, 150);
+      ctx.fillText("Allied Powers", 3*canvas.width/4, 150);
+      const optionHeight = 250;
+      const gap = 30;
+      // Axis options
+      let axisOptions = factionOptions.filter(opt => opt.side === "Axis");
+      axisOptions.forEach((opt, index) => {
+        let startY = 200 + index*(optionHeight+gap);
+        let centerX = canvas.width/4;
+        let btnW = 550, btnH = optionHeight;
+        let btnX = centerX - btnW/2;
+        let btnY = startY;
+        ctx.drawImage(buttonImg, btnX, btnY, btnW, btnH);
+        let flagSize = 50;
+        let flagX = btnX + 10;
+        let flagY = btnY + 10;
+        let flagImg = null;
+        switch(opt.flag) {
+          case "germany.jpg": flagImg = flagGermany; break;
+          case "italy.jpg": flagImg = flagItaly; break;
+          case "japan.jpg": flagImg = flagJapan; break;
+        }
+        if (flagImg) ctx.drawImage(flagImg, flagX, flagY, flagSize, flagSize);
+        ctx.font = fontLoaded ? "36px Wolfenstein" : "36px sans-serif";
+        ctx.fillStyle = "yellow";
+        ctx.textAlign = "left";
+        ctx.fillText(opt.name, flagX + flagSize + 10, btnY + 40);
+        ctx.font = fontLoaded ? "20px Wolfenstein" : "20px sans-serif";
+        ctx.fillStyle = "white";
+        wrapText(ctx, opt.description, flagX + flagSize + 10, btnY + 70, 400, 24);
+        let chooseBtnW = 220, chooseBtnH = 50;
+        let chooseBtnX = centerX - chooseBtnW/2;
+        let chooseBtnY = btnY + btnH - chooseBtnH - 20;
+        ctx.drawImage(buttonImg, chooseBtnX, chooseBtnY, chooseBtnW, chooseBtnH);
+        ctx.fillStyle = "black";
+        ctx.font = fontLoaded ? "24px Wolfenstein" : "24px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("choose faction", centerX, chooseBtnY + chooseBtnH/2);
+        opt.buttonRect = { x: chooseBtnX, y: chooseBtnY, width: chooseBtnW, height: chooseBtnH };
+      });
+      // Allied options
+      let alliedOptions = factionOptions.filter(opt => opt.side === "Allies");
+      alliedOptions.forEach((opt, index) => {
+        let startY = 200 + index*(optionHeight+gap);
+        let centerX = 3 * canvas.width/4;
+        let btnW = 550, btnH = optionHeight;
+        let btnX = centerX - btnW/2;
+        let btnY = startY;
+        ctx.drawImage(buttonImg, btnX, btnY, btnW, btnH);
+        let flagSize = 50;
+        let flagX = btnX + 10;
+        let flagY = btnY + 10;
+        let flagImg = null;
+        switch(opt.flag) {
+          case "usa.jpg": flagImg = flagUSA; break;
+          case "soviet_union.jpg": flagImg = flagSoviet; break;
+          case "uk.jpg": flagImg = flagUK; break;
+        }
+        if (flagImg) ctx.drawImage(flagImg, flagX, flagY, flagSize, flagSize);
+        ctx.font = fontLoaded ? "36px Wolfenstein" : "36px sans-serif";
+        ctx.fillStyle = "yellow";
+        ctx.textAlign = "left";
+        ctx.fillText(opt.name, flagX + flagSize + 10, btnY + 40);
+        ctx.font = fontLoaded ? "20px Wolfenstein" : "20px sans-serif";
+        ctx.fillStyle = "white";
+        wrapText(ctx, opt.description, flagX + flagSize + 10, btnY + 70, 400, 24);
+        let chooseBtnW = 220, chooseBtnH = 50;
+        let chooseBtnX = centerX - chooseBtnW/2;
+        let chooseBtnY = btnY + btnH - chooseBtnH - 20;
+        ctx.drawImage(buttonImg, chooseBtnX, chooseBtnY, chooseBtnW, chooseBtnH);
+        ctx.fillStyle = "black";
+        ctx.font = fontLoaded ? "24px Wolfenstein" : "24px sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("choose faction", centerX, chooseBtnY + chooseBtnH/2);
+        opt.buttonRect = { x: chooseBtnX, y: chooseBtnY, width: chooseBtnW, height: chooseBtnH };
+      });
+      startMusic();
+    }
+
+    // =============== Main Game Screen Drawing Functions ===============
+    function drawStaticMainGame() {
+      ctx.drawImage(mainScreenImg, 0, 0, canvas.width, canvas.height);
+      const rectHeight = canvas.height/5;
+      ctx.drawImage(buttonImg, 0, 0, canvas.width, rectHeight);
+      ctx.drawImage(buttonImg, 0, canvas.height - rectHeight, canvas.width, rectHeight);
+      ctx.fillStyle = "white";
+      ctx.font = fontLoaded ? "24px Wolfenstein" : "24px sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("Pupper Power", canvas.width - 240, rectHeight/2 - 30);
+      ctx.drawImage(pupperpowerImg, canvas.width - 260, rectHeight/2, 40, 40);
+      ctx.fillText("= " + enemyPupperPower, canvas.width - 240, rectHeight/2 + 50);
+      ctx.fillText("Pupper Power", canvas.width - 240, canvas.height - rectHeight/2 - 30);
+      ctx.drawImage(pupperpowerImg, canvas.width - 260, canvas.height - rectHeight/2, 40, 40);
+      ctx.fillText("= " + playerPupperPower, canvas.width - 240, canvas.height - rectHeight/2 + 50);
+
+      const cardMargin = 20;
+      const cardZoneHeight = rectHeight - 2 * cardMargin;
+      const naturalW = cardbackImg.naturalWidth, naturalH = cardbackImg.naturalHeight;
+      const scaleFactor = cardZoneHeight / naturalH;
+      const scaledWidth = naturalW * scaleFactor;
+      const bottomCardZoneX = canvas.width - scaledWidth - cardMargin;
+      const bottomCardZoneY = canvas.height - rectHeight + cardMargin;
+      ctx.drawImage(cardbackImg, bottomCardZoneX, bottomCardZoneY, scaledWidth, cardZoneHeight);
+      const topCardZoneX = canvas.width - scaledWidth - cardMargin;
+      const topCardZoneY = cardMargin;
+      ctx.drawImage(cardbackImg, topCardZoneX, topCardZoneY, scaledWidth, cardZoneHeight);
+
+      const middleY = rectHeight, middleHeight = canvas.height - 2 * rectHeight;
+      const laneWidth = canvas.width * 0.15, laneSpacing = canvas.width * 0.02;
+      const totalLanesWidth = 3 * laneWidth + 2 * laneSpacing;
+      const laneStartX = (canvas.width - totalLanesWidth) / 2;
+      for (let i = 0; i < 3; i++){
+        let laneX = laneStartX + i*(laneWidth + laneSpacing);
+        ctx.drawImage(battlefieldImg, laneX, middleY, laneWidth, middleHeight);
+        let laneCenterY = middleY + middleHeight/2;
+        const wireHeight = 100;
+        ctx.drawImage(wireImg, laneX, laneCenterY - wireHeight/2, laneWidth, wireHeight);
+      }
+      drawHandCards();
+      drawEnemyHandCards();
+      drawLaneCards();
+      drawLaneAttackTexts();
+      if (gamePhase === "playerTurnComplete") { drawRightButton("end turn"); }
+      if (gamePhase === "enemyTurnComplete") { drawRightButton("battle!"); }
+      drawGeneralCards();
+    }
+
+    function drawHandCards() {
+      handCards.forEach(card => {
+        if (!card.hidden) {
+          ctx.drawImage(card.img, card.currentX, card.currentY, card.width, card.height);
+        }
+      });
+    }
+
+    function drawEnemyHandCards() {
+      enemyHandCards.forEach(card => {
+        if (!card.hidden) {
+          ctx.drawImage(cardbackImg, card.currentX, card.currentY, card.width, card.height);
+        }
+      });
+    }
+
+    function drawLaneCards() {
+      for (let i = 0; i < 3; i++){
+        if (playerLaneAssignments[i] && !playerLaneAssignments[i].isAnimatingAttack && !playerLaneAssignments[i].hidden) {
+          let card = playerLaneAssignments[i];
+          let img = card.faceDown ? cardbackImg : card.img;
+          ctx.drawImage(img, card.laneX, card.laneY, card.width, card.height);
+        }
+        if (enemyLaneAssignments[i] && !enemyLaneAssignments[i].isAnimatingAttack && !enemyLaneAssignments[i].hidden) {
+          let card = enemyLaneAssignments[i];
+          let img = card.faceDown ? cardbackImg : card.img;
+          ctx.drawImage(img, card.laneX, card.laneY, card.width, card.height);
+        }
+      }
+    }
+
+    function drawLaneAttackTexts() {
+      for (let i = 0; i < 3; i++){
+        if (playerLaneAssignments[i] && !playerLaneAssignments[i].faceDown && !playerLaneAssignments[i].hidden) {
+          let card = playerLaneAssignments[i];
+          ctx.fillStyle = "yellow";
+          ctx.font = fontLoaded ? "20px Wolfenstein" : "20px sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText("attack = " + card.attack, card.laneX + card.width/2, card.laneY + card.height + 20);
+        }
+        if (enemyLaneAssignments[i] && !enemyLaneAssignments[i].faceDown && !enemyLaneAssignments[i].hidden) {
+          let card = enemyLaneAssignments[i];
+          ctx.fillStyle = "yellow";
+          ctx.font = fontLoaded ? "20px Wolfenstein" : "20px sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText("attack = " + card.attack, card.laneX + card.width/2, card.laneY - 10);
+        }
+      }
+    }
+
+    function drawRightButton(text) {
+      const rectHeight = canvas.height/5;
+      const middleY = rectHeight, middleHeight = canvas.height - 2 * rectHeight;
+      const laneWidth = canvas.width * 0.15, laneSpacing = canvas.width * 0.02;
+      const totalLanesWidth = 3 * laneWidth + 2 * laneSpacing;
+      const laneStartX = (canvas.width - totalLanesWidth) / 2;
+      const buttonX = laneStartX + totalLanesWidth + 20;
+      const buttonY = middleY + middleHeight/2 - rightButtonHeight/2;
+      ctx.drawImage(buttonImg, buttonX, buttonY, rightButtonWidth, rightButtonHeight);
+      ctx.fillStyle = "black";
+      ctx.font = fontLoaded ? "24px Wolfenstein" : "24px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, buttonX + rightButtonWidth/2, buttonY + rightButtonHeight/2);
+    }
+
+    function drawGeneralCards() {
+      ctx.fillStyle = "yellow";
+      ctx.font = fontLoaded ? "48px Wolfenstein" : "48px sans-serif";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      const enemyGeneralHeight = 150;
+      const enemyGeneralWidth = pawlinImg.naturalWidth * (enemyGeneralHeight / pawlinImg.naturalHeight);
+      ctx.drawImage(pawlinImg, 20, 20, enemyGeneralWidth, enemyGeneralHeight);
+      ctx.fillText(enemyFaction + " General Life: " + enemyGeneralLife, 20 + enemyGeneralWidth + 10, 20 + enemyGeneralHeight/2);
+      const playerGeneralHeight = 150;
+      const playerGeneralWidth = snifflerImg.naturalWidth * (playerGeneralHeight / snifflerImg.naturalHeight);
+      ctx.drawImage(snifflerImg, 20, canvas.height - 20 - playerGeneralHeight, playerGeneralWidth, playerGeneralHeight);
+      ctx.fillText(playerFaction + " General Life: " + playerGeneralLife, 20 + playerGeneralWidth + 10, canvas.height - 20 - playerGeneralHeight/2);
+    }
+
+    // =============== Animations and Battle Resolution Functions ===============
+    function initCardAnimations() {
+      const rectHeight = canvas.height/5, cardMargin = 20;
+      const cardZoneHeight = rectHeight - 2 * cardMargin;
+      let animations = [], gap = 20, numCards = 3;
+      let totalTargetWidth = 0, targetSizes = [], selectedCards = [];
+      for (let i = 0; i < numCards; i++){
+        let card = getRandomCard(playerCardPool);
+        card.faceDown = false;
+        selectedCards.push(card);
+        let tHeight = cardZoneHeight;
+        let tWidth = card.img.naturalWidth * (tHeight / card.img.naturalHeight);
+        targetSizes.push({ width: tWidth, height: tHeight });
+        totalTargetWidth += tWidth;
+      }
+      totalTargetWidth += gap * (numCards - 1);
+      const targetStartX = (canvas.width - totalTargetWidth) / 2, targetY = canvas.height - rectHeight/2;
+      let currentX = targetStartX;
+      selectedCards.forEach((card, index) => {
+        animations.push({
+          img: card.img,
+          startX: canvas.width - (cardbackImg.naturalWidth * (cardZoneHeight / cardbackImg.naturalHeight)) - 20,
+          startY: canvas.height - rectHeight + 20,
+          targetX: currentX,
+          targetY: targetY - targetSizes[index].height/2,
+          currentX: canvas.width - (cardbackImg.naturalWidth * (cardZoneHeight / cardbackImg.naturalHeight)) - 20,
+          currentY: canvas.height - rectHeight + 20,
+          width: targetSizes[index].width,
+          height: targetSizes[index].height,
+          attack: card.attack,
+          cost: card.cost,
+          sound: card.sound,
+          faction: card.faction,
+          faceDown: card.faceDown
+        });
+        currentX += targetSizes[index].width + gap;
+      });
+      cardAnimations = animations;
+      handCards = [];
+    }
+
+    function initEnemyCardAnimations() {
+      const rectHeight = canvas.height/5, cardMargin = 20;
+      const cardZoneHeight = rectHeight - 2 * cardMargin;
+      let animations = [], gap = 20, numCards = 3;
+      let totalTargetWidth = 0, targetSizes = [], selectedCards = [];
+      for (let i = 0; i < numCards; i++){
+        let card = getRandomCard(enemyCardPool);
+        card.faceDown = true;
+        selectedCards.push(card);
+        let tHeight = cardZoneHeight;
+        let tWidth = card.img.naturalWidth * (tHeight / card.img.naturalHeight);
+        targetSizes.push({ width: tWidth, height: tHeight });
+        totalTargetWidth += tWidth;
+      }
+      totalTargetWidth += gap * (numCards - 1);
+      const targetStartX = (canvas.width - totalTargetWidth) / 2, targetY = rectHeight/2;
+      let currentX = targetStartX;
+      selectedCards.forEach((card, index) => {
+        animations.push({
+          img: card.img,
+          startX: canvas.width - (cardbackImg.naturalWidth * (cardZoneHeight / cardbackImg.naturalHeight)) - 20,
+          startY: 20,
+          targetX: currentX,
+          targetY: targetY - targetSizes[index].height/2,
+          currentX: canvas.width - (cardbackImg.naturalWidth * (cardZoneHeight / cardbackImg.naturalHeight)) - 20,
+          currentY: 20,
+          width: targetSizes[index].width,
+          height: targetSizes[index].height,
+          attack: card.attack,
+          cost: card.cost,
+          sound: card.sound,
+          faction: card.faction,
+          faceDown: true
+        });
+        currentX += targetSizes[index].width + gap;
+      });
+      enemyCardAnimations = animations;
+      enemyHandCards = [];
+    }
+
+    function autoDragEnemyCard(card, targetLane, callback) {
+      const rectHeight = canvas.height/5;
+      const middleY = rectHeight, middleHeight = canvas.height - 2 * rectHeight;
+      const laneWidth = canvas.width * 0.15, laneSpacing = canvas.width * 0.02;
+      const totalLanesWidth = 3 * laneWidth + 2 * laneSpacing;
+      const laneStartX = (canvas.width - totalLanesWidth) / 2;
+      let targetX = laneStartX + targetLane * (laneWidth + laneSpacing) + laneWidth/2 - card.width/2;
+      let targetY = middleY + middleHeight/4 - card.height/2;
+      const startX = card.currentX, startY = card.currentY;
+      const duration = enemyDragDuration;
+      let startTime = null;
+      function animate(time) {
+        if (!startTime) startTime = time;
+        let progress = (time - startTime) / duration;
+        progress = Math.min(progress, 1);
+        card.currentX = startX + (targetX - startX) * progress;
+        card.currentY = startY + (targetY - startY) * progress;
+        drawStaticMainGame();
+        ctx.drawImage(cardbackImg, card.currentX, card.currentY, card.width, card.height);
+        if (progress < 1) {
+          requestAnimationFrame(animate);
+        } else {
+          enemyPupperPower -= card.cost;
+          enemyLaneAssignments[targetLane] = card;
+          card.laneX = card.currentX;
+          card.laneY = card.currentY;
+          card.faceDown = true;
+          callback();
+        }
+      }
+      requestAnimationFrame(animate);
+    }
+
+    function processEnemyCardsSequentially() {
+      enemyLanePlayIndex = 0;
+      let i = 0;
+      function processNext() {
+        if (i >= enemyHandCards.length) {
+          gamePhase = "enemyTurnComplete";
+          setTimeout(() => { requestAnimationFrame(animateTurn); }, 500);
+          return;
+        }
+        let card = enemyHandCards[i];
+        if (enemyLanePlayIndex < 3 && enemyPupperPower >= card.cost) {
+          autoDragEnemyCard(card, enemyLanePlayIndex, function() {
+            enemyLanePlayIndex++;
+            i++;
+            processNext();
+          });
+        } else {
+          i++;
+          processNext();
+        }
+      }
+      processNext();
+    }
+
+    function flipLaneCards(callback) {
+      const duration = 600;
+      let startTime = null;
+      function animate(time) {
+        if (!startTime) startTime = time;
+        let progress = (time - startTime) / duration;
+        progress = Math.min(progress, 1);
+        drawStaticMainGame();
+        for (let i = 0; i < 3; i++){
+          if (playerLaneAssignments[i]) {
+            let card = playerLaneAssignments[i];
+            let scale = Math.abs(Math.cos(progress * Math.PI));
+            let cardImg = (progress >= 0.5) ? card.img : cardbackImg;
+            ctx.save();
+            ctx.translate(card.laneX + card.width/2, card.laneY + card.height/2);
+            ctx.scale(scale, 1);
+            ctx.drawImage(cardImg, -card.width/2, -card.height/2, card.width, card.height);
+            ctx.restore();
+          }
+          if (enemyLaneAssignments[i]) {
+            let card = enemyLaneAssignments[i];
+            let scale = Math.abs(Math.cos(progress * Math.PI));
+            let cardImg = (progress >= 0.5) ? card.img : cardbackImg;
+            ctx.save();
+            ctx.translate(card.laneX + card.width/2, card.laneY + card.height/2);
+            ctx.scale(scale, 1);
+            ctx.drawImage(cardImg, -card.width/2, -card.height/2, card.width, card.height);
+            ctx.restore();
+          }
+        }
+        if (progress < 1) {
+          requestAnimationFrame(animate);
+        } else {
+          for (let i = 0; i < 3; i++){
+            if (playerLaneAssignments[i]) playerLaneAssignments[i].faceDown = false;
+            if (enemyLaneAssignments[i]) enemyLaneAssignments[i].faceDown = false;
+          }
+          callback();
+        }
+      }
+      requestAnimationFrame(animate);
+    }
+
+    function animateSingleAttackAndReturn(card, callback) {
+      card.isAnimatingAttack = true;
+      const rectHeight = canvas.height/5;
+      const middleHeight = canvas.height - 2 * rectHeight;
+      let targetY;
+      if (card.faction === "enemy") {
+        targetY = rectHeight + (3 * middleHeight / 4) - card.height/2;
+      } else {
+        targetY = rectHeight + (middleHeight / 4) - card.height/2;
+      }
+      const targetX = card.laneX;
+      const startX = card.currentX, startY = card.currentY;
+      const duration = 500;
+      let startTime = null;
+      function animateAttack(time) {
+        if (!startTime) startTime = time;
+        let progress = (time - startTime) / duration;
+        progress = Math.min(progress, 1);
+        card.currentX = startX + (targetX - startX) * progress;
+        card.currentY = startY + (targetY - startY) * progress;
+        drawStaticMainGame();
+        let img = card.faceDown ? cardbackImg : card.img;
+        ctx.drawImage(img, card.currentX, card.currentY, card.width, card.height);
+        if (progress < 1) {
+          requestAnimationFrame(animateAttack);
+        } else {
+          let attackSound = new Audio(card.sound || "ground.mp3");
+          attackSound.play();
+          if (card.faction === "enemy") {
+            playerGeneralLife -= card.attack;
+            if (playerGeneralLife < 0) playerGeneralLife = 0;
+          } else {
+            enemyGeneralLife -= card.attack;
+            if (enemyGeneralLife < 0) enemyGeneralLife = 0;
+          }
+          animateExplosionNoHide(card, function() {
+            if (card.faction === "enemy") {
+              for (let i = 0; i < 3; i++){
+                if (playerLaneAssignments[i] === card.loser) { playerLaneAssignments[i] = null; }
+              }
+            } else {
+              for (let i = 0; i < 3; i++){
+                if (enemyLaneAssignments[i] === card.loser) { enemyLaneAssignments[i] = null; }
+              }
+            }
+            animateReturn(card, callback);
+          });
+        }
+      }
+      requestAnimationFrame(animateAttack);
+    }
+
+    function animateExplosionNoHide(card, callback) {
+      const explosionSound = new Audio("explosion.mp3");
+      explosionSound.play();
+      const explosionOverlay = document.createElement("img");
+      explosionOverlay.src = "explosion.gif";
+      explosionOverlay.style.position = "absolute";
+      explosionOverlay.style.zIndex = "9999";
+      explosionOverlay.style.left = (canvas.offsetLeft + card.currentX) + "px";
+      explosionOverlay.style.top = (canvas.offsetTop + card.currentY) + "px";
+      explosionOverlay.style.width = card.width + "px";
+      explosionOverlay.style.height = card.height + "px";
+      explosionOverlay.style.pointerEvents = "none";
+      document.body.appendChild(explosionOverlay);
+      setTimeout(() => {
+        if (explosionOverlay.parentNode) {
+          explosionOverlay.parentNode.removeChild(explosionOverlay);
+        }
+        card.hidden = true;
+        callback();
+      }, 600);
+    }
+
+    function animateStrike(winner, loser, callback) {
+      winner.isAnimatingAttack = true;
+      const startX = winner.currentX, startY = winner.currentY;
+      const targetX = loser.currentX, targetY = loser.currentY;
+      const duration = 500;
+      let startTime = null;
+      function animate(time) {
+        if (!startTime) startTime = time;
+        let progress = (time - startTime) / duration;
+        progress = Math.min(progress, 1);
+        winner.currentX = startX + (targetX - startX) * progress;
+        winner.currentY = startY + (targetY - startY) * progress;
+        drawStaticMainGame();
+        let img = winner.faceDown ? cardbackImg : winner.img;
+        ctx.drawImage(img, winner.currentX, winner.currentY, winner.width, winner.height);
+        if (progress < 1) {
+          requestAnimationFrame(animate);
+        } else {
+          callback();
+        }
+      }
+      requestAnimationFrame(animate);
+    }
+
+    function animateReturn(card, callback) {
+      const startX = card.currentX, startY = card.currentY;
+      const targetX = (card.laneX !== undefined) ? card.laneX : card.targetX;
+      const targetY = (card.laneY !== undefined) ? card.laneY : card.targetY;
+      const duration = 500;
+      let startTime = null;
+      function animate(time) {
+        if (!startTime) startTime = time;
+        let progress = (time - startTime) / duration;
+        progress = Math.min(progress, 1);
+        card.currentX = startX + (targetX - startX) * progress;
+        card.currentY = startY + (targetY - startY) * progress;
+        drawStaticMainGame();
+        let img = card.faceDown ? cardbackImg : card.img;
+        ctx.drawImage(img, card.currentX, card.currentY, card.width, card.height);
+        if (progress < 1)
+          requestAnimationFrame(animate);
+        else {
+          card.isAnimatingAttack = false;
+          callback();
+        }
+      }
+      requestAnimationFrame(animate);
+    }
+
+    function animateEqualAttack(card1, card2, callback) {
+      card1.isAnimatingAttack = true;
+      card2.isAnimatingAttack = true;
+      let midX = (card1.currentX + card2.currentX) / 2;
+      let midY = (card1.currentY + card2.currentY) / 2;
+      const duration = 500;
+      let startTime = null;
+      const start1 = { x: card1.currentX, y: card1.currentY };
+      const start2 = { x: card2.currentX, y: card2.currentY };
+      function animate(time) {
+        if (!startTime) startTime = time;
+        let progress = (time - startTime) / duration;
+        progress = Math.min(progress, 1);
+        card1.currentX = start1.x + (midX - start1.x) * progress;
+        card1.currentY = start1.y + (midY - start1.y) * progress;
+        card2.currentX = start2.x + (midX - start2.x) * progress;
+        card2.currentY = start2.y + (midY - start2.y) * progress;
+        drawStaticMainGame();
+        let img1 = card1.faceDown ? cardbackImg : card1.img;
+        let img2 = card2.faceDown ? cardbackImg : card2.img;
+        ctx.drawImage(img1, card1.currentX, card1.currentY, card1.width, card1.height);
+        ctx.drawImage(img2, card2.currentX, card2.currentY, card2.width, card2.height);
+        if (progress < 1) {
+          requestAnimationFrame(animate);
+        } else {
+          let explosionSound = new Audio("explosion.mp3");
+          explosionSound.play();
+          const explosionOverlay = document.createElement("img");
+          explosionOverlay.src = "explosion.gif";
+          explosionOverlay.style.position = "absolute";
+          explosionOverlay.style.zIndex = "9999";
+          let explosionWidth = Math.max(card1.width, card2.width);
+          let explosionHeight = Math.max(card1.height, card2.height);
+          explosionOverlay.style.left = (canvas.offsetLeft + midX - explosionWidth/2) + "px";
+          explosionOverlay.style.top = (canvas.offsetTop + midY - explosionHeight/2) + "px";
+          explosionOverlay.style.width = explosionWidth + "px";
+          explosionOverlay.style.height = explosionHeight + "px";
+          explosionOverlay.style.pointerEvents = "none";
+          document.body.appendChild(explosionOverlay);
+          setTimeout(() => {
+            if (explosionOverlay.parentNode) {
+              explosionOverlay.parentNode.removeChild(explosionOverlay);
+            }
+            card1.hidden = true;
+            card2.hidden = true;
+            callback();
+          }, 600);
+        }
+      }
+      requestAnimationFrame(animate);
+    }
+
+    function displayBattlePopup(text, callback) {
+      const popupW = 200, popupH = 60;
+      const popupX = canvas.width/2 - popupW/2;
+      const popupY = canvas.height/2 - popupH/2;
+      ctx.drawImage(buttonImg, popupX, popupY, popupW, popupH);
+      ctx.fillStyle = "black";
+      ctx.font = fontLoaded ? "24px Wolfenstein" : "24px sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(text, popupX + popupW/2, popupY + popupH/2);
+      setTimeout(callback, 1000);
+    }
+
+    function processBattle() {
+      currentBattleLane = 0;
+      processNextLane();
+    }
+    function processNextLane() {
+      if (currentBattleLane >= 3) {
+        setTimeout(newRound, 1000);
+        return;
+      }
+      displayBattlePopup("lane " + (currentBattleLane + 1), () => {
+        resolveLane(currentBattleLane, () => {
+          currentBattleLane++;
+          setTimeout(processNextLane, 1000);
+        });
+      });
+    }
+    function resolveLane(laneIndex, callback) {
+      let playerCard = playerLaneAssignments[laneIndex] || null;
+      let enemyCard = enemyLaneAssignments[laneIndex] || null;
+      if (!playerCard && !enemyCard) {
+        displayBattlePopup("no cards in lane " + (laneIndex + 1), callback);
+        return;
+      }
+      if (playerCard && !enemyCard) {
+        displayBattlePopup("Player wins lane " + (laneIndex + 1), () => {
+          animateSingleAttackAndReturn(playerCard, () => {
+            playerLaneAssignments[laneIndex] = null;
+            callback();
+          });
+        });
+        return;
+      }
+      if (!playerCard && enemyCard) {
+        displayBattlePopup("Enemy wins lane " + (laneIndex + 1), () => {
+          animateSingleAttackAndReturn(enemyCard, () => {
+            enemyLaneAssignments[laneIndex] = null;
+            callback();
+          });
+        });
+        return;
+      }
+      let playerType = getCardType(playerCard);
+      let enemyType = getCardType(enemyCard);
+      let playerEffectiveAttack = playerCard.attack, enemyEffectiveAttack = enemyCard.attack;
+      let bonusApplied = false, bonusText = "";
+      if (isStrong(playerType, enemyType)) {
+        playerEffectiveAttack *= 2;
+        bonusText = "Strong vs Weak! Bonus: +" + playerCard.attack;
+        bonusApplied = true;
+        playerCard.attack = playerEffectiveAttack;
+      } else if (isStrong(enemyType, playerType)) {
+        enemyEffectiveAttack *= 2;
+        bonusText = "Strong vs Weak! Bonus: +" + enemyCard.attack;
+        bonusApplied = true;
+        enemyCard.attack = enemyEffectiveAttack;
+      }
+      if (bonusApplied) {
+        displayBattlePopup(bonusText, function() {
+          continueLaneResolution();
+        });
+      } else {
+        continueLaneResolution();
+      }
+      function continueLaneResolution() {
+        if (playerEffectiveAttack === enemyEffectiveAttack) {
+          displayBattlePopup("Equal power in lane " + (laneIndex + 1), function() {
+            animateEqualAttack(playerCard, enemyCard, function() {
+              playerLaneAssignments[laneIndex] = null;
+              enemyLaneAssignments[laneIndex] = null;
+              callback();
+            });
+          });
+          return;
+        }
+        let winner = null, loser = null, winnerSide = "", damage = 0;
+        if (playerEffectiveAttack > enemyEffectiveAttack) {
+          winner = playerCard;
+          loser = enemyCard;
+          winnerSide = "Player";
+          damage = Math.max(playerEffectiveAttack - enemyCard.attack, 0);
+        } else {
+          winner = enemyCard;
+          loser = playerCard;
+          winnerSide = "Enemy";
+          damage = Math.max(enemyEffectiveAttack - playerCard.attack, 0);
+        }
+        if (winnerSide === "Player") {
+          enemyGeneralLife -= damage;
+          if (enemyGeneralLife < 0) enemyGeneralLife = 0;
+        } else {
+          playerGeneralLife -= damage;
+          if (playerGeneralLife < 0) playerGeneralLife = 0;
+        }
+        playWinnerSound(winner, function(){});
+        animateStrike(winner, loser, function() {
+          animateExplosion(loser, function() {
+            if (loser.faction === "enemy") {
+              enemyLaneAssignments[laneIndex] = null;
+            } else {
+              playerLaneAssignments[laneIndex] = null;
+            }
+            displayBattlePopup(winnerSide + " wins lane " + (laneIndex + 1), function() {
+              animateReturn(winner, callback);
+            });
+          });
+        });
+      }
+    }
+
+    function playWinnerSound(winner, callback) {
+      if (winner.sound) {
+        let sound = new Audio(winner.sound);
+        sound.play();
+        sound.onended = callback;
+        return;
+      }
+      let sound = null;
+      if (winner.img.src.includes("soviet_heavy_tank") || winner.img.src.includes("soviet_soldier"))
+        sound = new Audio("ground.mp3");
+      else if (winner.img.src.includes("soviet_submarine") || winner.img.src.includes("typhoon_submarine"))
+        sound = new Audio("sea.mp3");
+      else if (winner.img.src.includes("yak_fighter") || winner.img.src.includes("yermolayev_bomber"))
+        sound = new Audio("air.mp3");
+      else if (winner.img.src.includes("bullet_hound") || winner.img.src.includes("ss_silver_snout"))
+        sound = new Audio("ground.mp3");
+      else if (winner.img.src.includes("galefang_fighter") || winner.img.src.includes("nimbus_crawler"))
+        sound = new Audio("air.mp3");
+      else if (winner.img.src.includes("horizon_howler") || winner.img.src.includes("waveborn_warhound"))
+        sound = new Audio("sea.mp3");
+      if (sound) {
+        sound.play();
+        sound.onended = function() { callback(); };
+      } else {
+        callback();
+      }
+    }
+
+    function animateExplosion(card, callback) {
+      const explosionSound = new Audio("explosion.mp3");
+      explosionSound.play();
+      const explosionOverlay = document.createElement("img");
+      explosionOverlay.src = "explosion.gif";
+      explosionOverlay.style.position = "absolute";
+      explosionOverlay.style.zIndex = "9999";
+      explosionOverlay.style.left = (canvas.offsetLeft + card.currentX) + "px";
+      explosionOverlay.style.top = (canvas.offsetTop + card.currentY) + "px";
+      explosionOverlay.style.width = card.width + "px";
+      explosionOverlay.style.height = card.height + "px";
+      explosionOverlay.style.pointerEvents = "none";
+      document.body.appendChild(explosionOverlay);
+      setTimeout(() => {
+        if (explosionOverlay.parentNode) {
+          explosionOverlay.parentNode.removeChild(explosionOverlay);
+        }
+        card.hidden = true;
+        callback();
+      }, 600);
+    }
+
+    function newRound() {
+      roundNumber++;
+      playerPupperPower = Math.min(roundNumber, 6);
+      enemyPupperPower = Math.min(roundNumber, 6);
+      if (enemyGeneralLife <= 0) {
+        displayBattlePopup("Player wins!", function() {});
+        return;
+      } else if (playerGeneralLife <= 0) {
+        displayBattlePopup("Enemy wins!", function() {});
+        return;
+      }
+      handCards = [];
+      enemyHandCards = [];
+      playerLaneAssignments = [null, null, null];
+      enemyLaneAssignments = [null, null, null];
+      gamePhase = "playerTurnOverlay";
+      turnOverlayAlpha = 1;
+      overlayFadeStart = null;
+      currentCardIndex = 0;
+      requestAnimationFrame(animateTurn);
+    }
+
+    // =============== Animate Turn Function ===============
+    function animateTurn(timestamp) {
+      drawStaticMainGame();
+      if (gamePhase === "playerTurnOverlay") {
+        if (!overlayFadeStart) overlayFadeStart = timestamp;
+        let elapsed = timestamp - overlayFadeStart;
+        turnOverlayAlpha = Math.max(1 - elapsed / overlayFadeDuration, 0);
+        const overlayW = 300, overlayH = 80;
+        const overlayX = canvas.width/2 - overlayW/2, overlayY = canvas.height/2 - overlayH/2;
+        ctx.globalAlpha = turnOverlayAlpha;
+        ctx.drawImage(buttonImg, overlayX, overlayY, overlayW, overlayH);
+        ctx.fillStyle = "black";
+        ctx.font = fontLoaded ? "36px Wolfenstein" : "36px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("player turn", overlayX + overlayW/2, overlayY + overlayH/2);
+        ctx.globalAlpha = 1;
+        if (elapsed < overlayFadeDuration) {
+          requestAnimationFrame(animateTurn);
+          return;
+        } else {
+          gamePhase = "playerDrawCards";
+          initCardAnimations();
+          cardAnimStartTime = null;
+          requestAnimationFrame(animateTurn);
+          return;
+        }
+      }
+      if (gamePhase === "playerDrawCards") {
+        drawStaticMainGame();
+        drawHandCards();
+        if (currentCardIndex < cardAnimations.length) {
+          if (!cardAnimStartTime) { cardAnimStartTime = timestamp; flipSound.play(); }
+          let progress = (timestamp - cardAnimStartTime) / cardAnimationDuration;
+          progress = Math.min(progress, 1);
+          let anim = cardAnimations[currentCardIndex];
+          anim.currentX = anim.startX + (anim.targetX - anim.startX) * progress;
+          anim.currentY = anim.startY + (anim.targetY - anim.startY) * progress;
+          ctx.drawImage(anim.img, anim.currentX, anim.currentY, anim.width, anim.height);
+          if (progress < 1) {
+            requestAnimationFrame(animateTurn);
+            return;
+          } else {
+            handCards.push(anim);
+            currentCardIndex++;
+            cardAnimStartTime = null;
+            setTimeout(() => { requestAnimationFrame(animateTurn); }, cardDrawDelay);
+            return;
+          }
+        } else {
+          gamePhase = "playerTurnComplete";
+          requestAnimationFrame(animateTurn);
+          return;
+        }
+      }
+      if (gamePhase === "enemyTurnOverlay") {
+        if (!enemyOverlayFadeStart) enemyOverlayFadeStart = timestamp;
+        let elapsed = timestamp - enemyOverlayFadeStart;
+        enemyTurnOverlayAlpha = Math.max(1 - elapsed / overlayFadeDuration, 0);
+        const overlayW = 300, overlayH = 80;
+        const overlayX = canvas.width/2 - overlayW/2, overlayY = canvas.height/2 - overlayH/2;
+        ctx.globalAlpha = enemyTurnOverlayAlpha;
+        ctx.drawImage(buttonImg, overlayX, overlayY, overlayW, overlayH);
+        ctx.fillStyle = "black";
+        ctx.font = fontLoaded ? "36px Wolfenstein" : "36px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("Enemy turn", overlayX + overlayW/2, overlayY + overlayH/2);
+        ctx.globalAlpha = 1;
+        if (elapsed < overlayFadeDuration) {
+          requestAnimationFrame(animateTurn);
+          return;
+        } else {
+          gamePhase = "enemyDrawCards";
+          initEnemyCardAnimations();
+          enemyCardAnimStartTime = null;
+          requestAnimationFrame(animateTurn);
+          return;
+        }
+      }
+      if (gamePhase === "enemyDrawCards") {
+        drawStaticMainGame();
+        drawEnemyHandCards();
+        if (currentEnemyCardIndex < enemyCardAnimations.length) {
+          if (!enemyCardAnimStartTime) { enemyCardAnimStartTime = timestamp; flipSound.play(); }
+          let progress = (timestamp - enemyCardAnimStartTime) / cardAnimationDuration;
+          progress = Math.min(progress, 1);
+          let anim = enemyCardAnimations[currentEnemyCardIndex];
+          anim.currentX = anim.startX + (anim.targetX - anim.startX) * progress;
+          anim.currentY = anim.startY + (anim.targetY - anim.startY) * progress;
+          ctx.drawImage(cardbackImg, anim.currentX, anim.currentY, anim.width, anim.height);
+          if (progress < 1) {
+            requestAnimationFrame(animateTurn);
+            return;
+          } else {
+            enemyHandCards.push(anim);
+            currentEnemyCardIndex++;
+            enemyCardAnimStartTime = null;
+            setTimeout(() => { requestAnimationFrame(animateTurn); }, cardDrawDelay);
+            return;
+          }
+        } else {
+          gamePhase = "enemyDrag";
+          processEnemyCardsSequentially();
+          return;
+        }
+      }
+    }
+
+    // =============== Event Listeners (Mouse Events) ===============
+    canvas.addEventListener("mousedown", function(event) {
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = event.clientX - rect.left, mouseY = event.clientY - rect.top;
+      if (currentScreen === "menu") {
+        const btnW = 400, btnH = 100;
+        const startBtn = { x: canvas.width/2 - btnW/2, y: canvas.height*0.5, width: btnW, height: btnH };
+        const exitBtn = { x: canvas.width/2 - btnW/2, y: canvas.height*0.7, width: btnW, height: btnH };
+        if (mouseX >= startBtn.x && mouseX <= startBtn.x+btnW &&
+            mouseY >= startBtn.y && mouseY <= startBtn.y+btnH) {
+          currentScreen = "factionChoice";
+          startMusic();
+          draw();
+        } else if (mouseX >= exitBtn.x && mouseX <= exitBtn.x+btnW &&
+                   mouseY >= exitBtn.y && mouseY <= exitBtn.y+btnH) {
+          // exit logic if desired
+        }
+      } else if (currentScreen === "factionChoice") {
+        for (let opt of factionOptions) {
+          let btn = opt.buttonRect;
+          if (!btn) continue;
+          if (mouseX >= btn.x && mouseX <= btn.x+btn.width &&
+              mouseY >= btn.y && mouseY <= btn.y+btn.height) {
+            if (opt.valid) {
+              playerFaction = opt.name;
+              enemyFaction = pickEnemyFaction(playerFaction);
+              snifflerImg = getGeneralForFaction(playerFaction);
+              pawlinImg = getGeneralForFaction(enemyFaction);
+              let pPool = getPoolForFaction(playerFaction);
+              playerCardPool = pPool.slice();
+              let ePool = getPoolForFaction(enemyFaction);
+              enemyCardPool = ePool.map(c => Object.assign({}, c, { faction: "enemy" }));
+              currentScreen = "main";
+              gamePhase = "playerTurnOverlay";
+              turnOverlayAlpha = 1;
+              overlayFadeStart = null;
+              currentCardIndex = 0;
+              handCards = [];
+              requestAnimationFrame(animateTurn);
+            } else {
+              alert("Faction not implemented yet. Please choose a valid faction.");
+            }
+            return;
+          }
+        }
+      } else if (currentScreen === "main") {
+        const btnX = getRightButtonX(), btnY = getRightButtonY();
+        if (mouseX >= btnX && mouseX <= btnX+rightButtonWidth &&
+            mouseY >= btnY && mouseY <= btnY+rightButtonHeight) {
+          if (gamePhase === "playerTurnComplete") {
+            playTurnEndSound("player", function() {
+              gamePhase = "enemyTurnOverlay";
+              enemyTurnOverlayAlpha = 1;
+              enemyOverlayFadeStart = null;
+              currentEnemyCardIndex = 0;
+              enemyCardAnimations = [];
+              enemyCardAnimStartTime = null;
+              enemyHandCards = [];
+              requestAnimationFrame(animateTurn);
+            });
+            return;
+          } else if (gamePhase === "enemyTurnComplete") {
+            playTurnEndSound("enemy", function() {
+              gamePhase = "battlePhase";
+              flipLaneCards(function() { processBattle(); });
+            });
+            return;
+          }
+        }
+        if (gamePhase === "playerTurnComplete") {
+          for (let card of handCards) {
+            if (mouseX >= card.currentX && mouseX <= card.currentX+card.width &&
+                mouseY >= card.currentY && mouseY <= card.currentY+card.height) {
+              playClickSound();
+              draggingCard = card;
+              dragOffsetX = mouseX - card.currentX;
+              dragOffsetY = mouseY - card.currentY;
+              break;
+            }
+          }
+        }
+      }
+    });
+
+    canvas.addEventListener("mousemove", function(event) {
+      if (currentScreen === "main" && gamePhase === "playerTurnComplete" && draggingCard) {
+        const rect = canvas.getBoundingClientRect();
+        const mouseX = event.clientX - rect.left, mouseY = event.clientY - rect.top;
+        draggingCard.currentX = mouseX - dragOffsetX;
+        draggingCard.currentY = mouseY - dragOffsetY;
+        drawStaticMainGame();
+      }
+    });
+
+    canvas.addEventListener("mouseup", function(event) {
+      if (currentScreen === "main" && gamePhase === "playerTurnComplete" && draggingCard) {
+        const rectHeight = canvas.height/5, middleY = rectHeight, middleHeight = canvas.height - 2*rectHeight;
+        const dropZoneY = middleY + middleHeight/2;
+        const cardCenterX = draggingCard.currentX + draggingCard.width/2;
+        const cardCenterY = draggingCard.currentY + draggingCard.height/2;
+        if (cardCenterY > dropZoneY) {
+          const laneWidth = canvas.width * 0.15, laneSpacing = canvas.width * 0.02;
+          const totalLanesWidth = 3 * laneWidth + 2 * laneSpacing;
+          const laneStartX = (canvas.width - totalLanesWidth) / 2;
+          for (let i = 0; i < 3; i++) {
+            let laneX = laneStartX + i*(laneWidth+laneSpacing);
+            if (cardCenterX >= laneX && cardCenterX <= laneX + laneWidth) {
+              const dropX = laneX + laneWidth/2 - draggingCard.width/2;
+              const dropY = middleY + (3*middleHeight/4) - draggingCard.height/2;
+              if (playerPupperPower >= draggingCard.cost) {
+                playerPupperPower -= draggingCard.cost;
+                draggingCard.currentX = dropX;
+                draggingCard.currentY = dropY;
+                draggingCard.laneX = dropX;
+                draggingCard.laneY = dropY;
+                draggingCard.faceDown = true;
+                playerLaneAssignments[i] = draggingCard;
+                playClickSound();
+              } else {
+                animateReturn(draggingCard, function() {});
+              }
+              break;
+            }
+          }
+        }
+        draggingCard = null;
+        drawStaticMainGame();
+      }
+    });
+
+    function getRightButtonX() {
+      const rectHeight = canvas.height/5, middleY = rectHeight, middleHeight = canvas.height - 2 * rectHeight;
+      const laneWidth = canvas.width * 0.15, laneSpacing = canvas.width * 0.02;
+      const totalLanesWidth = 3 * laneWidth + 2 * laneSpacing;
+      const laneStartX = (canvas.width - totalLanesWidth) / 2;
+      return laneStartX + totalLanesWidth + 20;
+    }
+    function getRightButtonY() {
+      const rectHeight = canvas.height/5, middleY = rectHeight, middleHeight = canvas.height - 2 * rectHeight;
+      return middleY + middleHeight/2 - rightButtonHeight/2;
+    }
+
+    // =============== End of Event Listeners ===============
+    // (All game logic is now included above.)
+  </script>
+</body>
+</html>
