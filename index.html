@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" href="pupperpower.png" type="image/png">
   <title>Dogs of War with Explosions</title>
   <style>
     html, body {
@@ -249,7 +251,7 @@
     const totalImages = 71;
     function imageLoaded() {
       imagesLoaded++;
-      if (imagesLoaded === totalImages) { resizeCanvas(); }
+      draw();
     }
     [
       backgroundImg, factionChoiceBg, buttonImg, mainScreenImg, cardbackImg, battlefieldImg, explosionImg,
@@ -265,7 +267,13 @@
       amphionSubmarineImg, hmsRobertsShipImg, eliteTrooperStenImg, vampireJetFighterImg, kingGeorgeBattleshipImg,
       card115Img, card117Img, card122Img, card129Img, card133Img, card136Img, card143Img, card144Img, card149Img,
       flagSoviet, flagUSA, flagJapan, flagItaly, flagUK, flagGermany
-    ].forEach(img => { img.onload = imageLoaded; });
+    ].forEach(img => {
+      img.addEventListener("load", imageLoaded, { once: true });
+      img.addEventListener("error", function() {
+        console.error("Image load error:", img.src);
+        imageLoaded();
+      }, { once: true });
+    });
 
     let fontLoaded = false;
     const wolfenstein = new FontFace('Wolfenstein', 'url(wolfenstein.ttf)');
@@ -281,6 +289,7 @@
       draw();
     }
     window.addEventListener("resize", resizeCanvas);
+    resizeCanvas();
 
     // =============== Card Pools for Each Faction ===============
     // Nazi Germany
@@ -610,6 +619,16 @@
     }
 
     // =============== Main Game Screen Drawing Functions ===============
+    function draw() {
+      if (currentScreen === "menu") {
+        drawMainMenu();
+      } else if (currentScreen === "factionChoice") {
+        drawFactionChoice();
+      } else if (currentScreen === "main") {
+        drawStaticMainGame();
+      }
+    }
+
     function drawStaticMainGame() {
       ctx.drawImage(mainScreenImg, 0, 0, canvas.width, canvas.height);
       const rectHeight = canvas.height/5;
