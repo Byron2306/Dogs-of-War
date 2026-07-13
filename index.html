@@ -533,88 +533,80 @@
     // =============== Faction Choice Screen Drawing ===============
     function drawFactionChoice() {
       ctx.drawImage(factionChoiceBg, 0, 0, canvas.width, canvas.height);
+      const compactHeader = canvas.height < 700;
+      const titleY = compactHeader ? 38 : 58;
+      const headingY = compactHeader ? 82 : 112;
+      const cardStartY = compactHeader ? 105 : 145;
+      const bottomMargin = 15;
+      const gap = compactHeader ? 8 : 12;
+      const optionHeight = (canvas.height - cardStartY - bottomMargin - 2 * gap) / 3;
+      const optionWidth = Math.min(550, canvas.width * 0.46);
+
       ctx.fillStyle = "white";
-      ctx.font = fontLoaded ? "60px Wolfenstein" : "60px sans-serif";
+      ctx.font = fontLoaded ? "52px Wolfenstein" : "52px sans-serif";
       ctx.textAlign = "center";
-      ctx.fillText("Choose your faction", canvas.width/2, 80);
-      ctx.font = fontLoaded ? "48px Wolfenstein" : "48px sans-serif";
+      ctx.textBaseline = "alphabetic";
+      ctx.fillText("Choose your faction", canvas.width / 2, titleY);
+      ctx.font = fontLoaded ? "34px Wolfenstein" : "34px sans-serif";
       ctx.fillStyle = "white";
-      ctx.fillText("Axis Powers", canvas.width/4, 150);
-      ctx.fillText("Allied Powers", 3*canvas.width/4, 150);
-      const optionHeight = 250;
-      const gap = 30;
-      // Axis options
-      let axisOptions = factionOptions.filter(opt => opt.side === "Axis");
-      axisOptions.forEach((opt, index) => {
-        let startY = 200 + index*(optionHeight+gap);
-        let centerX = canvas.width/4;
-        let btnW = 550, btnH = optionHeight;
-        let btnX = centerX - btnW/2;
-        let btnY = startY;
-        ctx.drawImage(buttonImg, btnX, btnY, btnW, btnH);
-        let flagSize = 50;
-        let flagX = btnX + 10;
-        let flagY = btnY + 10;
+      ctx.fillText("Axis Powers", canvas.width / 4, headingY);
+      ctx.fillText("Allied Powers", 3 * canvas.width / 4, headingY);
+
+      function drawFactionColumn(options, centerX) {
+        options.forEach((opt, index) => {
+          const btnX = centerX - optionWidth / 2;
+          const btnY = cardStartY + index * (optionHeight + gap);
+          const flagSize = Math.min(46, optionHeight * 0.25);
+          const flagX = btnX + 12;
+          const flagY = btnY + 10;
+          const chooseBtnH = Math.max(30, Math.min(44, optionHeight * 0.22));
+          const chooseBtnW = Math.min(220, optionWidth * 0.52);
+          const chooseBtnX = centerX - chooseBtnW / 2;
+          const chooseBtnY = btnY + optionHeight - chooseBtnH - 10;
+
+          ctx.drawImage(buttonImg, btnX, btnY, optionWidth, optionHeight);
+
         let flagImg = null;
         switch(opt.flag) {
           case "germany.jpg": flagImg = flagGermany; break;
           case "italy.jpg": flagImg = flagItaly; break;
           case "japan.jpg": flagImg = flagJapan; break;
-        }
-        if (flagImg) ctx.drawImage(flagImg, flagX, flagY, flagSize, flagSize);
-        ctx.font = fontLoaded ? "36px Wolfenstein" : "36px sans-serif";
-        ctx.fillStyle = "yellow";
-        ctx.textAlign = "left";
-        ctx.fillText(opt.name, flagX + flagSize + 10, btnY + 40);
-        ctx.font = fontLoaded ? "20px Wolfenstein" : "20px sans-serif";
-        ctx.fillStyle = "white";
-        wrapText(ctx, opt.description, flagX + flagSize + 10, btnY + 70, 400, 24);
-        let chooseBtnW = 220, chooseBtnH = 50;
-        let chooseBtnX = centerX - chooseBtnW/2;
-        let chooseBtnY = btnY + btnH - chooseBtnH - 20;
-        ctx.drawImage(buttonImg, chooseBtnX, chooseBtnY, chooseBtnW, chooseBtnH);
-        ctx.fillStyle = "black";
-        ctx.font = fontLoaded ? "24px Wolfenstein" : "24px sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText("choose faction", centerX, chooseBtnY + chooseBtnH/2);
-        opt.buttonRect = { x: chooseBtnX, y: chooseBtnY, width: chooseBtnW, height: chooseBtnH };
-      });
-      // Allied options
-      let alliedOptions = factionOptions.filter(opt => opt.side === "Allies");
-      alliedOptions.forEach((opt, index) => {
-        let startY = 200 + index*(optionHeight+gap);
-        let centerX = 3 * canvas.width/4;
-        let btnW = 550, btnH = optionHeight;
-        let btnX = centerX - btnW/2;
-        let btnY = startY;
-        ctx.drawImage(buttonImg, btnX, btnY, btnW, btnH);
-        let flagSize = 50;
-        let flagX = btnX + 10;
-        let flagY = btnY + 10;
-        let flagImg = null;
-        switch(opt.flag) {
           case "usa.jpg": flagImg = flagUSA; break;
           case "soviet_union.jpg": flagImg = flagSoviet; break;
           case "uk.jpg": flagImg = flagUK; break;
         }
-        if (flagImg) ctx.drawImage(flagImg, flagX, flagY, flagSize, flagSize);
-        ctx.font = fontLoaded ? "36px Wolfenstein" : "36px sans-serif";
-        ctx.fillStyle = "yellow";
-        ctx.textAlign = "left";
-        ctx.fillText(opt.name, flagX + flagSize + 10, btnY + 40);
-        ctx.font = fontLoaded ? "20px Wolfenstein" : "20px sans-serif";
-        ctx.fillStyle = "white";
-        wrapText(ctx, opt.description, flagX + flagSize + 10, btnY + 70, 400, 24);
-        let chooseBtnW = 220, chooseBtnH = 50;
-        let chooseBtnX = centerX - chooseBtnW/2;
-        let chooseBtnY = btnY + btnH - chooseBtnH - 20;
-        ctx.drawImage(buttonImg, chooseBtnX, chooseBtnY, chooseBtnW, chooseBtnH);
-        ctx.fillStyle = "black";
-        ctx.font = fontLoaded ? "24px Wolfenstein" : "24px sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText("choose faction", centerX, chooseBtnY + chooseBtnH/2);
-        opt.buttonRect = { x: chooseBtnX, y: chooseBtnY, width: chooseBtnW, height: chooseBtnH };
-      });
+
+          if (flagImg) ctx.drawImage(flagImg, flagX, flagY, flagSize, flagSize);
+          ctx.font = fontLoaded ? "28px Wolfenstein" : "28px sans-serif";
+          ctx.fillStyle = "yellow";
+          ctx.textAlign = "left";
+          ctx.fillText(opt.name, flagX + flagSize + 10, btnY + 38);
+
+          if (optionHeight >= 220 && canvas.width >= 900) {
+            ctx.font = fontLoaded ? "17px Wolfenstein" : "17px sans-serif";
+            ctx.fillStyle = "white";
+            wrapText(ctx, opt.description, flagX + flagSize + 10, btnY + 65,
+              optionWidth - flagSize - 34, 19);
+          }
+
+          ctx.drawImage(buttonImg, chooseBtnX, chooseBtnY, chooseBtnW, chooseBtnH);
+          ctx.fillStyle = "black";
+          ctx.font = fontLoaded ? "21px Wolfenstein" : "21px sans-serif";
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText("choose faction", centerX, chooseBtnY + chooseBtnH / 2);
+          ctx.textBaseline = "alphabetic";
+          opt.buttonRect = {
+            x: chooseBtnX,
+            y: chooseBtnY,
+            width: chooseBtnW,
+            height: chooseBtnH
+          };
+        });
+      }
+
+      drawFactionColumn(factionOptions.filter(opt => opt.side === "Axis"), canvas.width / 4);
+      drawFactionColumn(factionOptions.filter(opt => opt.side === "Allies"), 3 * canvas.width / 4);
       startMusic();
     }
 
