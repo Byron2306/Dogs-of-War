@@ -59,6 +59,33 @@
       }
       return lines.length;
     }
+
+    function drawFittedText(ctx, text, x, y, maxWidth, maxHeight, preferredSize) {
+      const minimumSize = 12;
+      let fontSize = preferredSize;
+      let lineHeight;
+      let lines;
+
+      do {
+        ctx.font = fontLoaded ? `${fontSize}px Wolfenstein` : `${fontSize}px sans-serif`;
+        lineHeight = Math.ceil(fontSize * 1.18);
+        lines = [];
+        let line = "";
+        for (const word of text.split(" ")) {
+          const testLine = line ? `${line} ${word}` : word;
+          if (line && ctx.measureText(testLine).width > maxWidth) {
+            lines.push(line);
+            line = word;
+          } else {
+            line = testLine;
+          }
+        }
+        if (line) lines.push(line);
+        fontSize--;
+      } while (lines.length * lineHeight > maxHeight && fontSize >= minimumSize);
+
+      lines.forEach((line, index) => ctx.fillText(line, x, y + index * lineHeight));
+    }
     
     // =============== Global Variables and Setup ===============
     const canvas = document.getElementById("gameCanvas");
@@ -90,7 +117,7 @@
 
     // Arrays for random enemy selection:
     const axisFactions = ["Nazi Germany", "Imperial Japan", "Fascist Italy"];
-    const alliedFactions = ["Soviet Union", "Great Britain"];
+    const alliedFactions = ["Soviet Union", "Great Britain", "United States of America"];
 
     // =============== Faction Options for the Selection Screen ===============
     const factionOptions = [
@@ -122,7 +149,7 @@
         side: "Allies",
         name: "United States of America",
         description: "The USA brings industrial might and innovative firepower to the fray, turning battlefields into arenas of high-octane action. Their troops, equipped with cutting-edge tech and boundless resolve, launch strategic offensives that redefine modern warfare.",
-        valid: false,
+        valid: true,
         flag: "usa.jpg",
         buttonRect: null
       },
@@ -169,6 +196,7 @@
     const japaneseGeneralImg = new Image(); japaneseGeneralImg.src = "hiroleasho.png";  // Imperial Japan
     const britishGeneralImg = new Image(); britishGeneralImg.src = "woofhill.png";      // Great Britain
     const italyGeneralImg = new Image(); italyGeneralImg.src = "mussolini.jpg";           // Fascist Italy
+    const americanGeneralImg = new Image(); americanGeneralImg.src = "roosepelt.jpg";     // United States
 
     let snifflerImg = snifflerImgInit;
     let pawlinImg = pawlinImgInit;
@@ -237,6 +265,17 @@
     const card144Img = new Image(); card144Img.src = "card144.jpg";
     const card149Img = new Image(); card149Img.src = "card149.jpg";
 
+    // United States Cards
+    const card34Img = new Image(); card34Img.src = "card34.jpg";
+    const card45Img = new Image(); card45Img.src = "card45.jpg";
+    const card162Img = new Image(); card162Img.src = "card162.jpg";
+    const card163Img = new Image(); card163Img.src = "card163.jpg";
+    const card168Img = new Image(); card168Img.src = "card168.jpg";
+    const card171Img = new Image(); card171Img.src = "card171.jpg";
+    const card174Img = new Image(); card174Img.src = "card174.jpg";
+    const card111Img = new Image(); card111Img.src = "card111.jpg";
+    const card156Img = new Image(); card156Img.src = "card156.jpg";
+
     // Flags for Faction Choice
     const flagSoviet = new Image(); flagSoviet.src = "soviet_union.jpg";
     const flagUSA = new Image(); flagUSA.src = "usa.jpg";
@@ -247,15 +286,14 @@
 
     // =============== Image Counting ===============
     let imagesLoaded = 0;
-    // Previously there were 61 images; now we add 1 new general (Italy) + 9 new Italy cards = 10 more → total 71 images.
-    const totalImages = 71;
+    const totalImages = 81;
     function imageLoaded() {
       imagesLoaded++;
       draw();
     }
     [
       backgroundImg, factionChoiceBg, buttonImg, mainScreenImg, cardbackImg, battlefieldImg, explosionImg,
-      snifflerImgInit, pawlinImgInit, japaneseGeneralImg, britishGeneralImg, italyGeneralImg,
+      snifflerImgInit, pawlinImgInit, japaneseGeneralImg, britishGeneralImg, italyGeneralImg, americanGeneralImg,
       pupperpowerImg, wireImg,
       galefangFighterImg, horizonHowlerImg, ssSilverSnoutImg, bulletHoundImg, wavebornWarhoundImg, nimbusCrawlerImg,
       rollingGrowlerImg, rumblingBarkbusterImg, seethingWarhoundImg, surfStrikerImg, snoopSchnauzerImg, thunderSquadronImg,
@@ -266,6 +304,7 @@
       douglasBostonBomberImg, grummanHellcatFighterImg, trooperLeeEnfieldImg, shermanMediumTankImg,
       amphionSubmarineImg, hmsRobertsShipImg, eliteTrooperStenImg, vampireJetFighterImg, kingGeorgeBattleshipImg,
       card115Img, card117Img, card122Img, card129Img, card133Img, card136Img, card143Img, card144Img, card149Img,
+      card34Img, card45Img, card162Img, card163Img, card168Img, card171Img, card174Img, card111Img, card156Img,
       flagSoviet, flagUSA, flagJapan, flagItaly, flagUK, flagGermany
     ].forEach(img => {
       img.addEventListener("load", imageLoaded, { once: true });
@@ -363,6 +402,19 @@
       { img: card149Img, cost: 2, attack: 55, sound: "sea.mp3", faction: "player" }
     ];
 
+    // United States of America
+    let americaPool = [
+      { img: card34Img,  cost: 3, attack: 90, sound: "ground.mp3", faction: "player" },
+      { img: card45Img,  cost: 3, attack: 75, sound: "ground.mp3", faction: "player" },
+      { img: card162Img, cost: 1, attack: 35, sound: "ground.mp3", faction: "player" },
+      { img: card163Img, cost: 1, attack: 45, sound: "sea.mp3", faction: "player" },
+      { img: card168Img, cost: 2, attack: 50, sound: "sea.mp3", faction: "player" },
+      { img: card171Img, cost: 3, attack: 70, sound: "sea.mp3", faction: "player" },
+      { img: card174Img, cost: 2, attack: 40, sound: "air.mp3", faction: "player" },
+      { img: card111Img, cost: 1, attack: 20, sound: "air.mp3", faction: "player" },
+      { img: card156Img, cost: 3, attack: 55, sound: "air.mp3", faction: "player" }
+    ];
+
     // Set default pools (Nazi vs Soviet by default)
     let playerCardPool = naziPool.slice();
     let enemyCardPool = sovietPool.slice();
@@ -377,6 +429,7 @@
       if (factionName === "Soviet Union") return sovietPool;
       if (factionName === "Great Britain") return britainPool;
       if (factionName === "Fascist Italy") return italyPool;
+      if (factionName === "United States of America") return americaPool;
       return naziPool;
     }
     function getGeneralForFaction(factionName) {
@@ -385,6 +438,7 @@
       if (factionName === "Imperial Japan") return japaneseGeneralImg;
       if (factionName === "Great Britain") return britishGeneralImg;
       if (factionName === "Fascist Italy") return italyGeneralImg;
+      if (factionName === "United States of America") return americanGeneralImg;
       return snifflerImgInit;
     }
     function pickEnemyFaction(playerFaction) {
@@ -398,10 +452,23 @@
       return pool[Math.floor(Math.random()*pool.length)];
     }
 
-    // =============== End-of-Turn Sound Function (Now Includes Italy) ===============
+    // =============== End-of-Turn Sound Function ===============
     function playTurnEndSound(faction, callback) {
       let soundFile;
-      if (playerFaction === "Fascist Italy") {
+      const activeFaction = faction === "player" ? playerFaction : enemyFaction;
+      const soundPrefixes = {
+        "Nazi Germany": "german",
+        "Imperial Japan": "japan",
+        "Fascist Italy": "italian",
+        "Soviet Union": "russian",
+        "Great Britain": "british",
+        "United States of America": "american"
+      };
+      const prefix = soundPrefixes[activeFaction];
+      if (prefix) {
+        soundFile = `${prefix}${Math.floor(Math.random() * 5) + 1}.mp3`;
+      }
+      else if (playerFaction === "Fascist Italy") {
         if (faction === "player") {
           let rand = Math.floor(Math.random()*5)+1;
           soundFile = `italian${rand}.mp3`;
@@ -540,7 +607,8 @@
       const bottomMargin = 15;
       const gap = compactHeader ? 8 : 12;
       const optionHeight = (canvas.height - cardStartY - bottomMargin - 2 * gap) / 3;
-      const optionWidth = Math.min(550, canvas.width * 0.46);
+      const columnGutter = Math.max(18, canvas.width * 0.025);
+      const optionWidth = Math.min(660, canvas.width / 2 - columnGutter * 2);
 
       ctx.fillStyle = "white";
       ctx.font = fontLoaded ? "52px Wolfenstein" : "52px sans-serif";
@@ -556,13 +624,14 @@
         options.forEach((opt, index) => {
           const btnX = centerX - optionWidth / 2;
           const btnY = cardStartY + index * (optionHeight + gap);
-          const flagSize = Math.min(46, optionHeight * 0.25);
-          const flagX = btnX + 12;
-          const flagY = btnY + 10;
+          const horizontalInset = Math.max(14, optionWidth * 0.035);
+          const flagSize = Math.max(32, Math.min(50, optionHeight * 0.23));
+          const flagX = btnX + horizontalInset;
+          const flagY = btnY + Math.max(9, optionHeight * 0.045);
           const chooseBtnH = Math.max(30, Math.min(44, optionHeight * 0.22));
           const chooseBtnW = Math.min(220, optionWidth * 0.52);
           const chooseBtnX = centerX - chooseBtnW / 2;
-          const chooseBtnY = btnY + optionHeight - chooseBtnH - 10;
+          const chooseBtnY = btnY + optionHeight - chooseBtnH - Math.max(8, optionHeight * 0.045);
 
           ctx.drawImage(buttonImg, btnX, btnY, optionWidth, optionHeight);
 
@@ -577,21 +646,30 @@
         }
 
           if (flagImg) ctx.drawImage(flagImg, flagX, flagY, flagSize, flagSize);
-          ctx.font = fontLoaded ? "28px Wolfenstein" : "28px sans-serif";
+          const nameFontSize = Math.max(19, Math.min(30, optionHeight * 0.13));
+          ctx.font = fontLoaded ? `${nameFontSize}px Wolfenstein` : `${nameFontSize}px sans-serif`;
           ctx.fillStyle = "yellow";
           ctx.textAlign = "left";
-          ctx.fillText(opt.name, flagX + flagSize + 10, btnY + 38);
+          ctx.fillText(opt.name, flagX + flagSize + 10, flagY + flagSize * 0.72);
 
-          if (optionHeight >= 220 && canvas.width >= 900) {
-            ctx.font = fontLoaded ? "17px Wolfenstein" : "17px sans-serif";
-            ctx.fillStyle = "white";
-            wrapText(ctx, opt.description, flagX + flagSize + 10, btnY + 65,
-              optionWidth - flagSize - 34, 19);
-          }
+          const descriptionX = flagX + flagSize + 10;
+          const descriptionY = flagY + flagSize + 5;
+          const descriptionBottom = chooseBtnY - 8;
+          ctx.fillStyle = "white";
+          drawFittedText(
+            ctx,
+            opt.description,
+            descriptionX,
+            descriptionY,
+            btnX + optionWidth - horizontalInset - descriptionX,
+            Math.max(28, descriptionBottom - descriptionY),
+            18
+          );
 
           ctx.drawImage(buttonImg, chooseBtnX, chooseBtnY, chooseBtnW, chooseBtnH);
           ctx.fillStyle = "black";
-          ctx.font = fontLoaded ? "21px Wolfenstein" : "21px sans-serif";
+          const chooseFontSize = Math.max(16, Math.min(21, chooseBtnH * 0.5));
+          ctx.font = fontLoaded ? `${chooseFontSize}px Wolfenstein` : `${chooseFontSize}px sans-serif`;
           ctx.textAlign = "center";
           ctx.textBaseline = "middle";
           ctx.fillText("choose faction", centerX, chooseBtnY + chooseBtnH / 2);
@@ -1437,7 +1515,7 @@
               snifflerImg = getGeneralForFaction(playerFaction);
               pawlinImg = getGeneralForFaction(enemyFaction);
               let pPool = getPoolForFaction(playerFaction);
-              playerCardPool = pPool.slice();
+              playerCardPool = pPool.map(c => Object.assign({}, c, { faction: "player" }));
               let ePool = getPoolForFaction(enemyFaction);
               enemyCardPool = ePool.map(c => Object.assign({}, c, { faction: "enemy" }));
               currentScreen = "main";
